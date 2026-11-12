@@ -118,6 +118,15 @@ PKG_END
       .code-actions button{font:inherit;font-size:.75rem;padding:.2rem .55rem;background:#fff;border:1px solid #c9ced6;border-radius:3px;cursor:pointer}
       .code-actions button:hover{background:#f0f2f5}
       .code-actions button.copied{background:#e6f4ea;border-color:#86c298;color:#1e6b33}
+      h3{font-size:1rem;font-weight:600;margin:1.5rem 0 .5rem}
+      h4{font-size:.85rem;font-weight:600;margin:1rem 0 .35rem;text-transform:uppercase;letter-spacing:.04em;color:#5a6270}
+      .warn-box{background:#fff8e6;border:1px solid #d4a72c;border-left:4px solid #d4a72c;border-radius:4px;padding:.9rem 1rem;margin:.75rem 0 1.25rem;font-size:.925rem;line-height:1.55}
+      .warn-box strong:first-child{color:#7a4a00;display:block;margin-bottom:.4rem;font-size:.95rem}
+      .warn-box ul{margin:.5rem 0 .5rem;padding-left:1.25rem}
+      .warn-box li{margin:.2rem 0}
+      .warn-box p{margin:.5rem 0 0}
+      .warn-box.danger{background:#fef2f2;border-color:#e53e3e}
+      .warn-box.danger strong:first-child{color:#8b0000}
       @media(max-width:640px){body{padding:0}main{border:0;border-radius:0;padding:1.25rem}}
     </style>
   </head>
@@ -126,6 +135,7 @@ PKG_END
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
+
 HTML_END
 
   cat > "$WORKDIR/src/main.jsx" <<'MAIN_END'
@@ -137,6 +147,7 @@ MAIN_END
 
   cat > "$WORKDIR/src/App.jsx" <<'APP_END'
 import React, { useState } from 'react'
+import flashScript from '../flash-fedora.sh?raw'
 
 const references = [
   { id: 1, publisher: 'docs.fedoraproject.org', title: 'Fedora Project - End of Life Releases', url: 'https://docs.fedoraproject.org/en-US/releases/eol/', note: 'Fedora Linux 37 reached end of life on 2023-12-05.' },
@@ -314,8 +325,90 @@ export default function App() {
 
       <section id="flash">
         <h2>USB flash tooling</h2>
-        <p>The repository includes <code>flash-fedora.sh</code>, an interactive script that downloads a Fedora ISO with resume support, verifies the checksum, loop-mounts the image, validates the target disk, and writes it with <code>dd</code>. It is emitted by <code>deploy.sh</code> and is not run automatically.</p>
-        <p>It handles both Fedora filename conventions: <code>Fedora-Workstation-Live-45-1.4.x86_64.iso</code> (Fedora 45 and later) and <code>Fedora-Workstation-Live-x86_64-45-1.4.iso</code> (older releases).</p>
+
+        <h3>How this tool came to exist</h3>
+        <p>This page documents the diagnosis of a Fedora 37 laptop with severe I/O stalls. Six findings converged on one conclusion: the installation was past end-of-life, and the USB carrying its replacement had to be written by something more careful than a one-liner.</p>
+        <ol>
+          <li>I/O PSI at 91.69 percent while 2.7 GiB RAM was free, so memory was not the bottleneck.</li>
+          <li>The optical drive <code>/dev/sr0</code> failed reads every few seconds; ejecting it dropped I/O pressure to 0.03 percent.</li>
+          <li><code>tracker-extract</code> was blocked in D-state on the root filesystem; user services were masked.</li>
+          <li><code>dnf-makecache.timer</code> polled dead RPM Fusion mirrors every few hours; disabled.</li>
+          <li>PackageKit was holding 1.5 GiB in its service cgroup; stopped.</li>
+          <li>Fedora 37 reached end of life on 2023-12-05. Fedora supports upgrades across one release at a time and the target was Fedora 45, so a clean install from USB was the safest path.</li>
+        </ol>
+        <p>The earlier <code>curl</code>-and-<code>dd</code> attempt is what motivated this script. Plain <code>curl</code> saved a 262-byte HTML 404 page as the ISO; <code>wget -c</code> then treated that HTML as valid ISO data and resumed from byte 262; and <code>set +e</code> combined with a filename mismatch let execution fall through to <code>dd</code> with <code>of=/dev/</code>. The only thing that stopped the write was a manual <code>n</code> at the confirmation prompt. This script adds the gates that were missing.</p>
+
+        <h3>What the script does</h3>
+        <ol>
+          <li>Pre-authenticates sudo and keeps the ticket alive across the whole run so <code>dd</code> never prompts mid-write.</li>
+          <li>Prompts for version, edition, build, and arch, with defaults 45 / Workstation / 1.4 / x86_64.</li>
+          <li>Reuses an existing ISO matching either Fedora filename convention, otherwise downloads with resume, retry, and stall detection.</li>
+          <li>Probes three checksum filename patterns on the mirror and verifies SHA-256, with a manual-hash fallback.</li>
+          <li>Loop-mounts the image and checks for <code>LiveOS/squashfs.img</code> or <code>images/install.img</code>.</li>
+          <li>Lists disks, refuses the whole-disk backing the running root, warns on non-USB transport.</li>
+          <li>Requires the literal word <code>ERASE</code> before <code>dd</code> fires.</li>
+          <li>Runs <code>dd</code> with <code>conv=fsync</code>, then <code>sync</code>, then reports the resulting partition layout.</li>
+        </ol>
+
+        <h3>Warnings</h3>
+        <div className="warn-box danger">
+          <strong>Destructive write operation</strong>
+          <code>dd</code> rewrites the target disk sector by sector. Partitions, filesystems, bootloaders, and data on that disk become unrecoverable. There is no undo and no confirmation dialog after the write starts.
+          <ul>
+            <li>The script refuses to write to the disk hosting <code>/</code>.</li>
+            <li>The script refuses partitions and loop devices by checking <code>lsblk -dno TYPE</code> equals <code>disk</code>.</li>
+            <li>The script warns and asks again if <code>lsblk -dno TRAN</code> is not <code>usb</code>.</li>
+            <li>The script requires the literal word <code>ERASE</code> at the final prompt.</li>
+            <li><code>--dry-run</code> walks every step, including device validation, and stops before <code>dd</code>.</li>
+          </ul>
+          <p>Verify the target by transport and by capacity before confirming. A 15 GB USB stick shown as <code>sdb</code> is not the 931 GB internal disk shown as <code>sda</code>.</p>
+        </div>
+        <div className="warn-box">
+          <strong>Network and checksum</strong>
+          Fedora mirror redirectors occasionally return HTML error pages. The script probes three checksum filename patterns and falls back to a manual-hash prompt. Verify the SHA-256 before flashing, because a truncated ISO produces a USB that boots to a grub prompt and nothing else.
+        </div>
+
+        <h3>Using it</h3>
+        <p>Three ways, in order from quickest to most inspectable.</p>
+
+        <h4>1. Download and run</h4>
+        <CodeBlock
+          code={`curl -fL -o flash-fedora.sh https://swipswaps.github.io/fedora37-io-audit/flash-fedora.sh
+chmod +x flash-fedora.sh
+./flash-fedora.sh`}
+          filename="quickstart.sh"
+          mime="application/x-sh;charset=utf-8"
+        />
+
+        <h4>2. Dry run first</h4>
+        <p>Walk every step, including device selection and the <code>ERASE</code> confirmation, and stop before <code>dd</code> fires. Use this on a first run to see exactly what the script intends.</p>
+        <CodeBlock
+          code={`./flash-fedora.sh --dry-run`}
+          filename="dry-run.sh"
+          mime="application/x-sh;charset=utf-8"
+        />
+
+        <h4>3. Reuse an existing ISO</h4>
+        <p>If you already have a verified <code>Fedora-Workstation-Live-45-1.4.x86_64.iso</code> in the current directory, the script detects it, skips the download, and goes straight to checksum, loop-mount, and device selection.</p>
+        <CodeBlock
+          code={`cd /path/to/iso/directory
+/path/to/flash-fedora.sh`}
+          filename="reuse.sh"
+          mime="application/x-sh;charset=utf-8"
+        />
+
+        <h3>Source</h3>
+        <p>The full script, exactly as deployed to this site and to the repository. The Copy and Download buttons in the header work on the current content.</p>
+        <CodeBlock code={flashScript} filename="flash-fedora.sh" mime="application/x-sh;charset=utf-8" />
+
+        <h3>Other download paths</h3>
+        <p>
+          <a href={`${import.meta.env.BASE_URL}flash-fedora.sh`} download="flash-fedora.sh">Download flash-fedora.sh (Pages)</a>
+          {' '}|{' '}
+          <a href="https://raw.githubusercontent.com/swipswaps/fedora37-io-audit/main/flash-fedora.sh">Raw on GitHub</a>
+          {' '}|{' '}
+          <a href="https://github.com/swipswaps/fedora37-io-audit/blob/main/flash-fedora.sh" target="_blank" rel="noopener noreferrer">Browse on GitHub</a>
+        </p>
       </section>
 
       <section>
@@ -339,6 +432,7 @@ export default function App() {
     </main>
   )
 }
+
 APP_END
 
   cat > "$WORKDIR/.github/workflows/deploy.yml" <<'WF_END'
