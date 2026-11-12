@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 
 const references = [
   { id: 1, publisher: 'docs.fedoraproject.org', title: 'Fedora Project - End of Life Releases', url: 'https://docs.fedoraproject.org/en-US/releases/eol/', note: 'Fedora Linux 37 reached end of life on 2023-12-05.' },
@@ -47,6 +47,88 @@ sudo dnf --disablerepo=rpmfusion-nonfree-nvidia-driver \\
          --disablerepo=rpmfusion-nonfree-steam \\
          install smartmontools
 gh run list --workflow="Deploy to GitHub Pages" --limit 3`
+
+function CopyButton({ text, label }) {
+  const [copied, setCopied] = useState(false)
+
+  const doCopy = async () => {
+    let ok = false
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text)
+        ok = true
+      } catch (e) {
+        ok = false
+      }
+    }
+    if (!ok) {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.setAttribute('readonly', '')
+      ta.style.position = 'fixed'
+      ta.style.top = '-9999px'
+      document.body.appendChild(ta)
+      ta.select()
+      try {
+        ok = document.execCommand('copy')
+      } catch (e) {
+        ok = false
+      }
+      document.body.removeChild(ta)
+    }
+    if (ok) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1600)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={doCopy}
+      className={copied ? 'copied' : ''}
+      aria-label={copied ? 'Copied to clipboard' : 'Copy code to clipboard'}
+    >
+      {copied ? 'Copied' : (label || 'Copy')}
+    </button>
+  )
+}
+
+function DownloadButton({ text, filename, mime }) {
+  const doDownload = () => {
+    const blob = new Blob([text], { type: mime || 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename || 'code.txt'
+    a.style.display = 'none'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
+  return (
+    <button type="button" onClick={doDownload} aria-label="Download file">
+      Download
+    </button>
+  )
+}
+
+function CodeBlock({ code, filename, mime }) {
+  return (
+    <div className="code-block">
+      <div className="code-header">
+        <span className="code-filename">{filename}</span>
+        <div className="code-actions">
+          <CopyButton text={code} />
+          <DownloadButton text={code} filename={filename} mime={mime} />
+        </div>
+      </div>
+      <pre><code>{code}</code></pre>
+    </div>
+  )
+}
 
 function Refs({ ids }) {
   if (!ids || ids.length === 0) return <span>none</span>
@@ -132,13 +214,13 @@ export default function App() {
       <section>
         <h2>Corrected RPM Fusion configuration</h2>
         <p>Fedora 37 reached end of life on 2023-12-05, and RPM Fusion follows upstream end-of-life. The two failing repositories should be disabled locally rather than redirected to another release.</p>
-        <pre><code>{rpmConfig}</code></pre>
+        <CodeBlock code={rpmConfig} filename="rpmfusion-nonfree.repo" />
       </section>
 
       <section>
         <h2>Verification commands</h2>
         <p>Run these on the affected host to confirm the diagnosis and the corrected configuration.</p>
-        <pre><code>{verifyCmds}</code></pre>
+        <CodeBlock code={verifyCmds} filename="verify.sh" mime="application/x-sh;charset=utf-8" />
       </section>
 
       <section>

@@ -101,6 +101,25 @@ PKG_END
       li { margin: 0.3rem 0; }
       footer { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid #d8dbe0; font-size: 0.85rem; color: #5a6270; }
       .refs { font-variant-numeric: tabular-nums; }
+      .code-block { border: 1px solid #d8dbe0; border-radius: 4px; overflow: hidden; margin: 0.5rem 0 1rem; background: #f6f8fa; }
+      .code-header { display: flex; justify-content: space-between; align-items: center; padding: 0.35rem 0.75rem; background: #eef0f3; border-bottom: 1px solid #d8dbe0; font-size: 0.8rem; color: #5a6270; }
+      .code-filename { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+      .code-actions { display: flex; gap: 0.35rem; }
+      .code-actions button {
+        font: inherit;
+        font-size: 0.75rem;
+        padding: 0.2rem 0.55rem;
+        background: #ffffff;
+        color: #1a1a1a;
+        border: 1px solid #c9ced6;
+        border-radius: 3px;
+        cursor: pointer;
+        line-height: 1.4;
+      }
+      .code-actions button:hover { background: #f0f2f5; border-color: #9aa3af; }
+      .code-actions button:active { background: #e3e6ea; }
+      .code-actions button.copied { background: #e6f4ea; border-color: #86c298; color: #1e6b33; }
+      .code-block pre { margin: 0; border: none; border-radius: 0; border-left: 3px solid #4b5563; }
     </style>
   </head>
   <body>
@@ -118,7 +137,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(<React.StrictMode><A
 MAIN_END
 
   cat > "$WORKDIR/src/App.jsx" <<'APP_END'
-import React from 'react'
+import React, { useState } from 'react'
 
 const references = [
   { id: 1, publisher: 'docs.fedoraproject.org', title: 'Fedora Project - End of Life Releases', url: 'https://docs.fedoraproject.org/en-US/releases/eol/', note: 'Fedora Linux 37 reached end of life on 2023-12-05.' },
@@ -167,6 +186,88 @@ sudo dnf --disablerepo=rpmfusion-nonfree-nvidia-driver \\
          --disablerepo=rpmfusion-nonfree-steam \\
          install smartmontools
 gh run list --workflow="Deploy to GitHub Pages" --limit 3`
+
+function CopyButton({ text, label }) {
+  const [copied, setCopied] = useState(false)
+
+  const doCopy = async () => {
+    let ok = false
+    if (navigator.clipboard && window.isSecureContext) {
+      try {
+        await navigator.clipboard.writeText(text)
+        ok = true
+      } catch (e) {
+        ok = false
+      }
+    }
+    if (!ok) {
+      const ta = document.createElement('textarea')
+      ta.value = text
+      ta.setAttribute('readonly', '')
+      ta.style.position = 'fixed'
+      ta.style.top = '-9999px'
+      document.body.appendChild(ta)
+      ta.select()
+      try {
+        ok = document.execCommand('copy')
+      } catch (e) {
+        ok = false
+      }
+      document.body.removeChild(ta)
+    }
+    if (ok) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1600)
+    }
+  }
+
+  return (
+    <button
+      type="button"
+      onClick={doCopy}
+      className={copied ? 'copied' : ''}
+      aria-label={copied ? 'Copied to clipboard' : 'Copy code to clipboard'}
+    >
+      {copied ? 'Copied' : (label || 'Copy')}
+    </button>
+  )
+}
+
+function DownloadButton({ text, filename, mime }) {
+  const doDownload = () => {
+    const blob = new Blob([text], { type: mime || 'text/plain;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename || 'code.txt'
+    a.style.display = 'none'
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  }
+
+  return (
+    <button type="button" onClick={doDownload} aria-label="Download file">
+      Download
+    </button>
+  )
+}
+
+function CodeBlock({ code, filename, mime }) {
+  return (
+    <div className="code-block">
+      <div className="code-header">
+        <span className="code-filename">{filename}</span>
+        <div className="code-actions">
+          <CopyButton text={code} />
+          <DownloadButton text={code} filename={filename} mime={mime} />
+        </div>
+      </div>
+      <pre><code>{code}</code></pre>
+    </div>
+  )
+}
 
 function Refs({ ids }) {
   if (!ids || ids.length === 0) return <span>none</span>
@@ -252,13 +353,13 @@ export default function App() {
       <section>
         <h2>Corrected RPM Fusion configuration</h2>
         <p>Fedora 37 reached end of life on 2023-12-05, and RPM Fusion follows upstream end-of-life. The two failing repositories should be disabled locally rather than redirected to another release.</p>
-        <pre><code>{rpmConfig}</code></pre>
+        <CodeBlock code={rpmConfig} filename="rpmfusion-nonfree.repo" />
       </section>
 
       <section>
         <h2>Verification commands</h2>
         <p>Run these on the affected host to confirm the diagnosis and the corrected configuration.</p>
-        <pre><code>{verifyCmds}</code></pre>
+        <CodeBlock code={verifyCmds} filename="verify.sh" mime="application/x-sh;charset=utf-8" />
       </section>
 
       <section>

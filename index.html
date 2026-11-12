@@ -41,6 +41,25 @@
       li { margin: 0.3rem 0; }
       footer { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid #d8dbe0; font-size: 0.85rem; color: #5a6270; }
       .refs { font-variant-numeric: tabular-nums; }
+      .code-block { border: 1px solid #d8dbe0; border-radius: 4px; overflow: hidden; margin: 0.5rem 0 1rem; background: #f6f8fa; }
+      .code-header { display: flex; justify-content: space-between; align-items: center; padding: 0.35rem 0.75rem; background: #eef0f3; border-bottom: 1px solid #d8dbe0; font-size: 0.8rem; color: #5a6270; }
+      .code-filename { font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; }
+      .code-actions { display: flex; gap: 0.35rem; }
+      .code-actions button {
+        font: inherit;
+        font-size: 0.75rem;
+        padding: 0.2rem 0.55rem;
+        background: #ffffff;
+        color: #1a1a1a;
+        border: 1px solid #c9ced6;
+        border-radius: 3px;
+        cursor: pointer;
+        line-height: 1.4;
+      }
+      .code-actions button:hover { background: #f0f2f5; border-color: #9aa3af; }
+      .code-actions button:active { background: #e3e6ea; }
+      .code-actions button.copied { background: #e6f4ea; border-color: #86c298; color: #1e6b33; }
+      .code-block pre { margin: 0; border: none; border-radius: 0; border-left: 3px solid #4b5563; }
     </style>
   </head>
   <body>
