@@ -559,7 +559,10 @@ lsblk "/dev/$TARGET"
 FLASH_END
   chmod +x "$WORKDIR/flash-fedora.sh"
 
-  ok "files written to $WORKDIR (including flash-fedora.sh)"
+  mkdir -p "$WORKDIR/public"
+  cp "$WORKDIR/flash-fedora.sh" "$WORKDIR/public/flash-fedora.sh"
+  chmod +x "$WORKDIR/public/flash-fedora.sh"
+  ok "files written to $WORKDIR (flash-fedora.sh in root and public/)"
 
   step "3. Build"
   cd "$WORKDIR"
