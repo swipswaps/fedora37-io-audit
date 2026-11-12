@@ -148,6 +148,7 @@ MAIN_END
   cat > "$WORKDIR/src/App.jsx" <<'APP_END'
 import React, { useState } from 'react'
 import flashScript from '../flash-fedora.sh?raw'
+import x11Script from '../fix-x11-forwarding.sh?raw'
 
 const references = [
   { id: 1, publisher: 'docs.fedoraproject.org', title: 'Fedora Project - End of Life Releases', url: 'https://docs.fedoraproject.org/en-US/releases/eol/', note: 'Fedora Linux 37 reached end of life on 2023-12-05.' },
@@ -276,6 +277,7 @@ export default function App() {
         <a href="#config">RPM Fusion config</a>
         <a href="#verify">Verification</a>
         <a href="#flash">USB flash</a>
+        <a href="#x11">X11 forwarding</a>
         <a href="#references">References</a>
       </nav>
 
@@ -408,6 +410,86 @@ chmod +x flash-fedora.sh
           <a href="https://raw.githubusercontent.com/swipswaps/fedora37-io-audit/main/flash-fedora.sh">Raw on GitHub</a>
           {' '}|{' '}
           <a href="https://github.com/swipswaps/fedora37-io-audit/blob/main/flash-fedora.sh" target="_blank" rel="noopener noreferrer">Browse on GitHub</a>
+        </p>
+      </section>
+
+      <section id="x11">
+        <h2>X11 forwarding over SSH</h2>
+
+        <h3>Why this tool exists</h3>
+        <p>The first <code>ssh -Y</code> into the freshly upgraded Fedora 45 host printed <code>/usr/bin/xauth: file /home/owner/.Xauthority does not exist</code>. That single line identifies the failure: sshd negotiated X11 forwarding, allocated the synthetic display <code>localhost:10.0</code>, but had no <code>xauth</code> binary to write the authorization cookie into <code>~/.Xauthority</code>. The SSH channel was established in a state that no later action can retroactively correct.</p>
+        <p>On Fedora 45 Workstation, <code>xorg-x11-xauth</code> is not part of the default install. Installing it fixes every future session; the current one cannot be repaired from inside itself.</p>
+
+        <h3>What the script does</h3>
+        <ol>
+          <li>Reports diagnostic state before any change: <code>DISPLAY</code>, <code>SSH_CONNECTION</code>, presence and size of <code>~/.Xauthority</code>, and whether <code>xauth</code> is installed.</li>
+          <li>Pre-authenticates sudo once.</li>
+          <li>Installs <code>xorg-x11-xauth</code> if missing and marks the session as requiring a reconnect.</li>
+          <li>Asserts that <code>sshd -T</code> is usable (nonzero exit, at least five lines, a <code>Port</code> directive). If not, prints the first ten lines and exits rather than misdiagnosing.</li>
+          <li>Parses <code>X11Forwarding</code>, <code>X11UseLocalhost</code>, and <code>XauthLocation</code> case-insensitively. Fedora 45's <code>sshd -T</code> emits capitalized keys; lowercase-only patterns return empty.</li>
+          <li>Writes <code>/etc/ssh/sshd_config.d/60-x11-forwarding.conf</code> only if <code>X11Forwarding</code> is not already <code>yes</code>; validates with <code>sshd -t</code>; reloads; re-parses to verify the change.</li>
+          <li>Re-runs <code>sshd -T -C user=...,host=...,addr=...</code> to catch a <code>Match</code> block that overrides the global setting for this user.</li>
+          <li>Matches the X11 cookie by display number, accepting both <code>hostname:NN</code> and <code>hostname/unix:NN</code> - the two forms sshd actually writes. The literal string <code>localhost:10</code> is never written to <code>.Xauthority</code>.</li>
+          <li>Returns one of three verdicts: <code>SUCCESS</code>, <code>CONFIG_FIXED_RECONNECT_REQUIRED</code>, or <code>FAILED</code>.</li>
+        </ol>
+
+        <h3>Warnings</h3>
+        <div className="warn-box danger">
+          <strong>Existing sessions cannot be repaired retroactively</strong>
+          The X11 cookie is written by sshd during the connection handshake, before the remote shell exists. Installing <code>xorg-x11-xauth</code> after the fact fixes all future sessions but does not add a cookie to the current one. If the script reports <code>CONFIG_FIXED_RECONNECT_REQUIRED</code>, the only path forward is <code>exit</code> followed by <code>ssh -Y</code>.
+          <ul>
+            <li><code>xauth list</code> shows a cookie: this session is ready.</li>
+            <li><code>xauth list</code> empty: reconnect is required.</li>
+            <li>Neither is fixed by running the script twice.</li>
+          </ul>
+        </div>
+        <div className="warn-box">
+          <strong>sshd -T is case-sensitive to parsers and to sudo</strong>
+          Fedora 45's <code>sshd -T</code> emits capitalized keys (<code>Port 22</code>, <code>X11Forwarding yes</code>). Parsers that match only lowercase silently report <code>unknown</code>. The script normalizes with <code>tolower()</code> in awk. Similarly, <code>sudo</code> resets environment by default, and <code>sudo which sshd</code> can fail if <code>/usr/sbin</code> is not in the secure path - the script uses an absolute path to <code>/usr/sbin/sshd</code> to avoid this.
+        </div>
+        <div className="warn-box">
+          <strong>Cookie matching depends on sshd's hostname choice</strong>
+          sshd writes cookies under the server's own hostname with a Unix family suffix - <code>fedora/unix:10</code> on this host, not <code>localhost:10</code>. A <code>grep</code> for <code>localhost:10</code> will miss every cookie sshd writes. The script matches on <code>[:/]NN</code> where <code>NN</code> is the display number, accepting both forms.
+        </div>
+        <div className="warn-box">
+          <strong>xorg-x11-apps is not available on Fedora 45</strong>
+          The package split; <code>xeyes</code> is now its own package. A script that tries <code>dnf install xorg-x11-apps</code> to verify forwarding end to end will fail with <code>No match for argument</code>. This script performs no graphical test at all: the presence of a valid cookie in <code>~/.Xauthority</code> is the definitive server-side proof that forwarding is wired up.
+        </div>
+
+        <h3>Using it</h3>
+        <h4>1. Download and run</h4>
+        <CodeBlock
+          code={`curl -fL -o fix-x11-forwarding.sh https://swipswaps.github.io/fedora37-io-audit/fix-x11-forwarding.sh
+chmod +x fix-x11-forwarding.sh
+./fix-x11-forwarding.sh`}
+          filename="quickstart.sh"
+          mime="application/x-sh;charset=utf-8"
+        />
+
+        <h4>2. On a session that predates the fix</h4>
+        <p>If <code>xorg-x11-xauth</code> was missing when the session was established, the script installs it and reports <code>CONFIG_FIXED_RECONNECT_REQUIRED</code>. Exit and reconnect, then run again. On the second run the cookie check succeeds and the verdict flips to <code>SUCCESS</code>. That transition - no cookie to cookie - is the definitive proof the fix took.</p>
+        <CodeBlock
+          code={`./fix-x11-forwarding.sh
+# RESULT: CONFIG_FIXED_RECONNECT_REQUIRED
+exit
+ssh -Y owner@host
+./fix-x11-forwarding.sh
+# RESULT: SUCCESS`}
+          filename="reconnect-flow.sh"
+          mime="application/x-sh;charset=utf-8"
+        />
+
+        <h3>Source</h3>
+        <p>The full script, exactly as deployed to this site and to the repository.</p>
+        <CodeBlock code={x11Script} filename="fix-x11-forwarding.sh" mime="application/x-sh;charset=utf-8" />
+
+        <h3>Other download paths</h3>
+        <p>
+          <a href={`${import.meta.env.BASE_URL}fix-x11-forwarding.sh`} download="fix-x11-forwarding.sh">Download fix-x11-forwarding.sh (Pages)</a>
+          {' '}|{' '}
+          <a href="https://raw.githubusercontent.com/swipswaps/fedora37-io-audit/main/fix-x11-forwarding.sh">Raw on GitHub</a>
+          {' '}|{' '}
+          <a href="https://github.com/swipswaps/fedora37-io-audit/blob/main/fix-x11-forwarding.sh" target="_blank" rel="noopener noreferrer">Browse on GitHub</a>
         </p>
       </section>
 
@@ -653,8 +735,196 @@ lsblk "/dev/$TARGET"
 FLASH_END
   chmod +x "$WORKDIR/flash-fedora.sh"
 
+  cat > "$WORKDIR/fix-x11-forwarding.sh" <<'FIX_X11_END'
+#!/usr/bin/env bash
+# fix-x11-forwarding.sh - run on the Fedora host that receives ssh -Y.
+# Idempotent. Gated: each step asserts its precondition or fails with a
+# concrete next diagnostic. No xeyes, no xorg-x11-apps (absent on F45).
+set +e
+set +u
+set +o pipefail
+
+P="[fix-x11]"
+
+sshd_kv() {
+  awk -v k="$2" 'tolower($1)==tolower(k){print $2; exit}' <<< "$1"
+}
+
+main() {
+  local ERRORS=0
+  local RECONNECT_NEEDED=0
+
+  fail() { echo "$P FAIL: $1"; ERRORS=$((ERRORS + 1)); }
+  ok()   { echo "$P OK:   $1"; }
+  info() { echo "$P INFO: $1"; }
+  warn() { echo "$P WARN: $1"; }
+  step() { echo ""; echo "== $1 =="; }
+
+  step "0. Diagnostics"
+  info "user=$USER host=$(hostname) kernel=$(uname -r)"
+  info "DISPLAY=${DISPLAY:-<unset>}"
+  info "SSH_CONNECTION=${SSH_CONNECTION:-<not an SSH session>}"
+  if [ -e "$HOME/.Xauthority" ]; then
+    info ".Xauthority present ($(stat -c %s "$HOME/.Xauthority") bytes)"
+  else
+    info ".Xauthority absent"
+  fi
+  if command -v xauth >/dev/null; then
+    ok "xauth: $(command -v xauth)"
+  else
+    warn "xauth missing"
+  fi
+
+  step "1. sudo"
+  sudo -v
+  if [ "$?" -ne 0 ]; then fail "sudo authentication"; return 1; fi
+  ok "sudo ticket acquired"
+
+  step "2. xauth install"
+  if command -v xauth >/dev/null; then
+    ok "already present"
+  else
+    info "installing xorg-x11-xauth"
+    sudo dnf install -y xorg-x11-xauth >/tmp/xauth-install.$$ 2>&1
+    if ! command -v xauth >/dev/null; then
+      fail "install did not provide xauth"
+      awk '{print "    " $0}' /tmp/xauth-install.$$
+      rm -f /tmp/xauth-install.$$
+      return 1
+    fi
+    rm -f /tmp/xauth-install.$$
+    ok "installed"
+    RECONNECT_NEEDED=1
+  fi
+
+  step "3. sshd -T usable; parse effective config"
+  local SSHD_BIN=""
+  local c
+  for c in /usr/sbin/sshd /usr/local/sbin/sshd; do
+    if [ -x "$c" ]; then SSHD_BIN="$c"; break; fi
+  done
+  if [ -z "$SSHD_BIN" ]; then
+    local via_path
+    via_path=$(command -v sshd)
+    if [ -n "$via_path" ] && [ -x "$via_path" ]; then SSHD_BIN="$via_path"; fi
+  fi
+  if [ -z "$SSHD_BIN" ]; then fail "sshd binary not found"; return 1; fi
+  info "sshd: $SSHD_BIN"
+
+  local SSHD_T_OUT RC LINES
+  SSHD_T_OUT=$(sudo "$SSHD_BIN" -T 2>&1)
+  RC=$?
+  LINES=$(printf '%s\n' "$SSHD_T_OUT" | wc -l)
+  if [ "$RC" -ne 0 ] || [ "$LINES" -lt 5 ] || ! printf '%s\n' "$SSHD_T_OUT" | grep -qi '^port '; then
+    fail "sshd -T unusable (rc=$RC lines=$LINES)"
+    info "first 10 lines:"
+    printf '%s\n' "$SSHD_T_OUT" | head -10 | awk '{print "    " $0}'
+    info "inspect:  sudo $SSHD_BIN -t"
+    return 1
+  fi
+  ok "sshd -T produced $LINES lines"
+
+  local X11F X11L XAUTH
+  X11F=$(sshd_kv "$SSHD_T_OUT" x11forwarding)
+  X11L=$(sshd_kv "$SSHD_T_OUT" x11uselocalhost)
+  XAUTH=$(sshd_kv "$SSHD_T_OUT" xauthlocation)
+  info "x11forwarding=${X11F:-<absent>} x11uselocalhost=${X11L:-<absent>} xauthlocation=${XAUTH:-<absent>}"
+
+  step "4. Ensure X11Forwarding yes (re-verify after apply)"
+  if [ "$X11F" = "yes" ]; then
+    ok "already yes"
+  else
+    info "writing /etc/ssh/sshd_config.d/60-x11-forwarding.conf"
+    sudo mkdir -p /etc/ssh/sshd_config.d
+    sudo tee /etc/ssh/sshd_config.d/60-x11-forwarding.conf > /dev/null <<'DROPIN_END'
+X11Forwarding yes
+X11UseLocalhost yes
+DROPIN_END
+    local SYN
+    SYN=$(sudo "$SSHD_BIN" -t 2>&1)
+    if [ -n "$SYN" ]; then
+      fail "sshd -t rejected drop-in: $SYN"
+      return 1
+    fi
+    sudo systemctl reload sshd
+    SSHD_T_OUT=$(sudo "$SSHD_BIN" -T 2>&1)
+    X11F=$(sshd_kv "$SSHD_T_OUT" x11forwarding)
+    if [ "$X11F" != "yes" ]; then
+      fail "reload succeeded but x11forwarding still '${X11F:-absent}'"
+      info "a Match block or later Include is overriding"
+      info "inspect:  sudo grep -rn '^Match\|X11Forwarding' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/"
+      return 1
+    fi
+    ok "drop-in applied and re-verified"
+  fi
+
+  step "5. Per-connection X11Forwarding for $USER"
+  local PC_OUT PER_USER
+  PC_OUT=$(sudo "$SSHD_BIN" -T -C user="$USER",host=localhost,addr=127.0.0.1 2>&1)
+  PER_USER=$(sshd_kv "$PC_OUT" x11forwarding)
+  info "per-connection=${PER_USER:-<absent>}"
+  if [ "$PER_USER" != "yes" ]; then
+    fail "per-connection X11Forwarding not yes"
+    info "inspect:  sudo grep -rn '^Match\|X11Forwarding' /etc/ssh/sshd_config /etc/ssh/sshd_config.d/"
+    return 1
+  fi
+  ok "per-connection=yes"
+
+  step "6. X11 cookie for current session"
+  if [ -z "$DISPLAY" ]; then
+    warn "DISPLAY unset - not an SSH -Y session"
+    info "reconnect from client:  ssh -Y $USER@<this-host>"
+  else
+    local NUM COOKIE
+    NUM="${DISPLAY##*:}"
+    NUM="${NUM%%.*}"
+    info "display number: :$NUM"
+    COOKIE=$(xauth list | grep -E "[:/]${NUM}([[:space:]]|$)")
+    if [ -n "$COOKIE" ]; then
+      ok "cookie present:"
+      printf '%s\n' "$COOKIE" | awk '{print "    " $0}'
+    else
+      warn "no cookie for :$NUM - session predates xauth install"
+      info "existing sessions cannot be repaired retroactively"
+      RECONNECT_NEEDED=1
+    fi
+  fi
+
+  step "7. Optional key-based auth"
+  info "on the client:"
+  info "  ssh-keygen -t ed25519   (if you do not already have a key)"
+  info "  ssh-copy-id $USER@<this-host>"
+
+  step "8. Optional Cockpit MOTD"
+  if [ -e /etc/motd.d/cockpit ] || [ -e /etc/motd.d/50-cockpit ]; then
+    info "Cockpit MOTD present"
+    info "  enable Cockpit:  sudo systemctl enable --now cockpit.socket"
+    info "  or hide it:      sudo ln -sfn /dev/null /etc/motd.d/cockpit"
+  else
+    ok "no Cockpit MOTD"
+  fi
+
+  step "Summary"
+  if [ "$ERRORS" -gt 0 ]; then
+    echo "$P RESULT: FAILED ($ERRORS error(s)); see messages above"
+    return 1
+  fi
+  if [ "$RECONNECT_NEEDED" -eq 1 ]; then
+    echo "$P RESULT: CONFIG_FIXED_RECONNECT_REQUIRED"
+    info "next:  exit ; ssh -Y $USER@<this-host> ; ./fix-x11-forwarding.sh"
+    return 0
+  fi
+  echo "$P RESULT: SUCCESS - cookie present, X11Forwarding=yes for $USER, session ready"
+  return 0
+}
+
+main "$@"
+FIX_X11_END
+  chmod +x "$WORKDIR/fix-x11-forwarding.sh"
+
   mkdir -p "$WORKDIR/public"
   cp "$WORKDIR/flash-fedora.sh" "$WORKDIR/public/flash-fedora.sh"
+  cp "$WORKDIR/fix-x11-forwarding.sh" "$WORKDIR/public/fix-x11-forwarding.sh"
   chmod +x "$WORKDIR/public/flash-fedora.sh"
   ok "files written to $WORKDIR (flash-fedora.sh in root and public/)"
 
