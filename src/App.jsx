@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import flashScript from '../flash-fedora.sh?raw'
 import x11Script from '../fix-x11-forwarding.sh?raw'
+import guideScript from '../fedora45-guide.sh?raw'
 
 const references = [
   { id: 1, publisher: 'docs.fedoraproject.org', title: 'Fedora Project - End of Life Releases', url: 'https://docs.fedoraproject.org/en-US/releases/eol/', note: 'Fedora Linux 37 reached end of life on 2023-12-05.' },
@@ -130,6 +131,7 @@ export default function App() {
         <a href="#verify">Verification</a>
         <a href="#flash">USB flash</a>
         <a href="#x11">X11 forwarding</a>
+        <a href="#guide">Fedora 45 guide</a>
         <a href="#references">References</a>
       </nav>
 
@@ -342,6 +344,53 @@ ssh -Y owner@host
           <a href="https://raw.githubusercontent.com/swipswaps/fedora37-io-audit/main/fix-x11-forwarding.sh">Raw on GitHub</a>
           {' '}|{' '}
           <a href="https://github.com/swipswaps/fedora37-io-audit/blob/main/fix-x11-forwarding.sh" target="_blank" rel="noopener noreferrer">Browse on GitHub</a>
+        </p>
+      </section>
+
+      <section id="guide">
+        <h2>Fedora 45 interactive guide</h2>
+        <p>Interactive menu for GNOME performance tuning, DNF5 tuning, a post-install review that offers a firewalld fix when firewalld is installed but not running, systemd service health, git sync, and optional XFCE installation. Every action prints its exact command before asking. Re-running is safe.</p>
+
+        <h3>What it covers</h3>
+        <ul>
+          <li><strong>D-Bus auto-attach.</strong> Preflight exports <code>XDG_RUNTIME_DIR</code> and <code>DBUS_SESSION_BUS_ADDRESS</code> if <code>/run/user/$(id -u)/bus</code> exists, so <code>gsettings</code> and <code>gnome-extensions</code> work over SSH.</li>
+          <li><strong>Firewalld remediation.</strong> Review detects firewalld installed but not running, offers <code>systemctl enable --now firewalld</code>, verifies with <code>firewall-cmd --state</code>, and prints diagnostics if it does not start.</li>
+          <li><strong>Service health.</strong> Option 10 lists firewalld, sshd, chronyd, systemd-timesyncd, gdm, NetworkManager, cups, bluetooth with <code>active=</code> and <code>enabled=</code>.</li>
+          <li><strong>Git sync.</strong> Option 11 pulls when <code>.git</code> exists, or clones from <code>github.com/swipswaps/fedora37-io-audit</code> when the directory is empty.</li>
+          <li><strong>Comma-separated input.</strong> Typing <code>1,3,4,5</code> at the menu runs those four in order; each asks its own confirmation.</li>
+        </ul>
+
+        <div className="warn-box">
+          <strong>Bus required for GNOME options over SSH</strong>
+          Options 1, 2, 3, and 9 need a reachable graphical session bus. <code>/run/user/1000/bus</code> exists as long as a graphical user is logged in on the console. If that session has been logged out, preflight prints a one-line instruction instead of failing mid-run.
+        </div>
+        <div className="warn-box danger">
+          <strong>XFCE is a 1 GiB install that adds an Xorg server</strong>
+          XFCE is optional. It pulls 369 packages, adds Xorg to a Wayland-only Workstation install, and requires a reboot before the session appears in GDM. After first login, <code>xdg-desktop-portal</code> needs <code>systemctl --user stop/start xdg-desktop-portal.service</code>.
+        </div>
+
+        <h3>Usage</h3>
+        <CodeBlock
+          code={`# fresh Fedora 45 target: curl from Pages and run
+curl -fL -o fedora45-guide.sh https://swipswaps.github.io/fedora37-io-audit/fedora45-guide.sh
+chmod +x fedora45-guide.sh
+./fedora45-guide.sh
+# at the menu, type 8 for the recommended sequence,
+# or 1,3,4,5 to run those four, or a single digit`}
+          filename="run.sh"
+          mime="application/x-sh;charset=utf-8"
+        />
+
+        <h3>Source</h3>
+        <CodeBlock code={guideScript} filename="fedora45-guide.sh" mime="application/x-sh;charset=utf-8" />
+
+        <h3>Other download paths</h3>
+        <p>
+          <a href={`${import.meta.env.BASE_URL}fedora45-guide.sh`} download="fedora45-guide.sh">Download fedora45-guide.sh (Pages)</a>
+          {' '}|{' '}
+          <a href="https://raw.githubusercontent.com/swipswaps/fedora37-io-audit/main/fedora45-guide.sh">Raw on GitHub</a>
+          {' '}|{' '}
+          <a href="https://github.com/swipswaps/fedora37-io-audit/blob/main/fedora45-guide.sh" target="_blank" rel="noopener noreferrer">Browse on GitHub</a>
         </p>
       </section>
 
